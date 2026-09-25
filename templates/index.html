@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+{% block title %}Tendium Scraper — Översikt{% endblock %}
+{% block subtitle %}{{ config.target_url }}{% endblock %}
+
+{% block content %}
+
+  {% if status.needs_login %}
+  <div class="login-banner" id="login-banner">
+    <p>
+      <strong>Manual login needed.</strong>
+      A Chromium window should have opened on this machine. Log into your Tendium
+      account there, then click the button once you can see your dashboard.
+      If the window doesn't respond to clicks/typing, save your login on the
+      <a href="{{ url_for('settings_page') }}" style="color:var(--amber);">Inställningar</a> page instead —
+      the scraper will fill the form automatically without needing the window to be interactive.
+    </p>
+    <form method="post" action="{{ url_for('confirm_login_route') }}">
+      <button type="submit" class="primary">I've logged in</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <section class="panel">
+    <div class="panel-header-row">
+      <h2>Run control</h2>
+      <span class="muted">
+        {% if status.session_initialized %}Session saved{% else %}No saved session yet — next run requires manual login{% endif %}
+      </span>
+    </div>
+    <div class="stat-row" style="margin-bottom:14px;">
+      <div>
+        <span class="stat-label">Last started</span>
+        <span id="stat-started">{{ status.started_at and status.started_at|int or '—' }}</span>
+      </div>
+      <div>
+        <span class="stat-label">Last finished</span>
+        <span id="stat-finished">{{ status.finished_at and status.finished_at|int or '—' }}</span>
+      </div>
+      <div>
+        <span class="stat-label">Last exit code</span>
+        <span id="stat-exit">{{ status.exit_code if status.exit_code is not none else '—' }}</span>
+      </div>
+    </div>
+    <div class="row">
+      <form method="post" action="{{ url_for('run') }}">
+        <button type="submit" class="primary" id="run-btn" {% if status.running %}disabled{% endif %}>Run scraper now</button>
+      </form>
+      <form method="post" action="{{ url_for('stop') }}">
+        <button type="submit" class="danger" id="stop-btn" {% if not status.running %}disabled{% endif %}>Stop</button>
+      </form>
+      <a href="{{ url_for('download_csv') }}"><button type="button" class="ghost" {% if not csv_exists %}disabled{% endif %}>Download CSV</button></a>
+      <form method="post" action="{{ url_for('reset_session') }}" onsubmit="return confirm('This deletes the saved login session. The next run will require logging in again. Continue?');">
+        <button type="submit" class="ghost" {% if status.running %}disabled{% endif %}>Reset saved session</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header-row">
+      <h2>Renewal overview</h2>
+      <span class="muted">sorted by contract end date — most urgent first. Click any row for full details.</span>
+    </div>
+    <div class="stat-tiles" id="stat-tiles">
+      <div class="stat-tile"><div class="value" id="stat-total">{{ stats.total }}</div><div class="label">Avtal totalt</div></div>
+      <div class="stat-tile"><div class="value" id="stat-expired" style="color:var(--red);">{{ stats.expired }}</div><div class="label">Redan utgångna</div></div>
+      <div class="stat-tile"><div class="value" id="stat-expiring" style="color:var(--amber);">{{ stats.expiring_soon }}</div><div class="label">Löper ut inom {{ config.renewal_alert_days }} dagar</div></div>
+      <div class="stat-tile"><div class="value" id="stat-tags">{{ stats.distinct_tags }}</div><div class="label">Distinct tags</div></div>
+      <div class="stat-tile"><div class="value" id="stat-companies">{{ stats.distinct_companies }}</div><div class="label">Avtalsbolag</div></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header-row">
+      <h2>Scraped tenders</h2>
+      <span class="muted" id="tender-count">{{ tenders|length }} shown (most recent first)</span>
+    </div>
+    <div class="row" style="margin-bottom:14px;">
+      <div class="field" style="min-width:220px;">
+        <label for="tag-filter">Filter by tag (e.g. ekonomisystem)</label>
+        <input type="text" id="tag-filter" list="tag-options" placeholder="Type a tag…">
+        <datalist id="tag-options"></datalist>
+      </div>
+      <button type="button" class="ghost" id="tag-filter-clear" style="margin-top:20px;">Clear filter</button>
+    </div>
+    <div class="tender-list" id="tenders-list">
+      {% if tenders %}
+        {% for t in tenders %}
+        <div class="tender-card" data-tags="{{ (t.tags or '')|lower }}" data-index="{{ loop.index0 }}">
+          <div class="tender-card-top">
+            <div>
+              <h3 class="tender-title">
+                {% if t.url %}<a href="{{ t.url }}" target="_blank" rel="noopener">{{ t.title }}</a>{% else %}{{ t.title }}{% endif %}
+              </h3>
+              <div class="tender-subtitle">{{ t.buyer }}{% if t.region %} · {{ t.region }}{% endif %}</div>
+            </div>
+            <div class="tender-card-badges">
+              <span class="badge {{ t.renewal_css }}">{{ t.renewal_label }}</span>
+              {% if t.procurement_type %}<span class="tag-pill">{{ t.procurement_type }}</span>{% endif %}
+              {% for tag in (t.tags or '').split('|') if tag %}<span class="tag-pill">{{ tag }}</span>{% endfor %}
+            </div>
+          </div>
+
+          <div class="tender-facts">
+            <div class="tender-fact">
+              <span class="fact-label">Tilldelat bolag</span>
+              <span class="fact-value">{% if t.contract_url %}<a href="{{ t.contract_url }}" target="_blank" rel="noopener">{{ t.contracted_company or 'Avtal' }}</a>{% else %}{{ t.contracted_company or '—' }}{% endif %}</span>
+            </div>
+            <div class="tender-fact">
+              <span class="fact-label">Avtalsperiod</span>
+              <span class="fact-value">{% if t.contract_start %}{{ t.contract_start }}{% if t.contract_end %} – {{ t.contract_end }}{% endif %}{% else %}—{% endif %}</span>
+            </div>
+            <div class="tender-fact">
+              <span class="fact-label">Tilläggstid</span>
+              <span class="fact-value">{{ t.extension_period or '—' }}</span>
+            </div>
+            <div class="tender-fact">
+              <span class="fact-label">Deadline</span>
+              <span class="fact-value">{{ t.deadline or '—' }}</span>
+            </div>
+            <div class="tender-fact">
+              <span class="fact-label">Ansvarig</span>
+              <span class="fact-value">
+                {% if t.responsible_email %}<a href="mailto:{{ t.responsible_email }}">{{ t.responsible_name.split(' <')[0] if t.responsible_name else t.responsible_email }}</a>
+                {% elif t.responsible_name %}{{ t.responsible_name }}
+                {% else %}—{% endif %}
+                {% if t.responsible_phone %}<br>{{ t.responsible_phone }}{% endif %}
+              </span>
+            </div>
+          </div>
+
+          {% if t.description %}<p class="tender-desc">{{ t.description }}</p>{% endif %}
+
+          <div class="tender-card-footer">
+            <span>Skrapad: {{ t.scraped_at }}</span>
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty" id="tenders-empty">No tenders scraped yet. Run the scraper to populate this list.</div>
+      {% endif %}
+    </div>
+  </section>
+
+{% endblock %}
+
+{% block modal %}
+<div class="modal-overlay" id="detail-modal">
+  <div class="modal-box">
+    <button type="button" class="modal-close" id="modal-close">&times;</button>
+    <h3 id="modal-title"></h3>
+    <div class="modal-sub" id="modal-sub"></div>
+    <dl class="modal-grid" id="modal-grid"></dl>
+    <div class="modal-desc" id="modal-desc"></div>
+    <div class="modal-links" id="modal-links"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+const runBtn = document.getElementById('run-btn');
+const stopBtn = document.getElementById('stop-btn');
+let currentTenders = {{ tenders|tojson }};
+
+function updateStats(stats) {
+  if (!stats) return;
+  document.getElementById('stat-total').textContent = stats.total;
+  document.getElementById('stat-expired').textContent = stats.expired;
+  document.getElementById('stat-expiring').textContent = stats.expiring_soon;
+  document.getElementById('stat-tags').textContent = stats.distinct_tags;
+  document.getElementById('stat-companies').textContent = stats.distinct_companies;
+}
+
+function fieldRow(label, value) {
+  if (!value) return '';
+  return `<dt>${escapeHtml(label)}</dt><dd>${value}</dd>`;
+}
+
+// responsible_name sometimes already embeds the email as "Name <email>" —
+// when responsible_email is also set, show just the name as the mailto
+// link's text instead of printing the email twice.
+function contactDisplay(t) {
+  const parts = [];
+  if (t.responsible_email) {
+    const label = t.responsible_name ? t.responsible_name.split(' <')[0] : t.responsible_email;
+    parts.push(`<a href="mailto:${escapeHtml(t.responsible_email)}">${escapeHtml(label)}</a>`);
+  } else if (t.responsible_name) {
+    parts.push(escapeHtml(t.responsible_name));
+  }
+  if (t.responsible_phone) parts.push(escapeHtml(t.responsible_phone));
+  return parts.length ? parts.join('<br>') : '—';
+}
+
+function openTenderModal(t) {
+  document.getElementById('modal-title').textContent = t.title || '(untitled)';
+  document.getElementById('modal-sub').textContent = [t.buyer, t.region].filter(Boolean).join(' · ');
+
+  const period = [t.contract_start, t.contract_end].filter(Boolean).join(' – ');
+  const responsible = contactDisplay(t);
+  const tagsHtml = renderTagBadges(t.tags);
+
+  document.getElementById('modal-grid').innerHTML = [
+    fieldRow('Status', `<span class="badge ${t.renewal_css || 'idle'}">${escapeHtml(t.renewal_label || '—')}</span>`),
+    fieldRow('Type', escapeHtml(t.procurement_type)),
+    fieldRow('Tags', tagsHtml),
+    fieldRow('Deadline', escapeHtml(t.deadline)),
+    fieldRow('Buyer', escapeHtml(t.buyer)),
+    fieldRow('Region', escapeHtml(t.region)),
+    fieldRow('Responsible', responsible),
+    fieldRow('Contracted company', escapeHtml(t.contracted_company)),
+    fieldRow('Contract period', escapeHtml(period)),
+    fieldRow('Extension', escapeHtml(t.extension_period)),
+    fieldRow('Scraped at', escapeHtml(t.scraped_at)),
+  ].join('');
+
+  document.getElementById('modal-desc').textContent = t.description || '';
+
+  const links = [];
+  if (t.url) links.push(`<a href="${t.url}" target="_blank" rel="noopener"><button type="button" class="ghost">Open tender</button></a>`);
+  if (t.contract_url) links.push(`<a href="${t.contract_url}" target="_blank" rel="noopener"><button type="button" class="ghost">Open contract</button></a>`);
+  document.getElementById('modal-links').innerHTML = links.join('');
+
+  document.getElementById('detail-modal').classList.add('open');
+}
+
+function closeTenderModal() {
+  document.getElementById('detail-modal').classList.remove('open');
+}
+
+document.getElementById('modal-close').addEventListener('click', closeTenderModal);
+document.getElementById('detail-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'detail-modal') closeTenderModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeTenderModal();
+});
+document.getElementById('tenders-list').addEventListener('click', (e) => {
+  if (e.target.closest('a')) return; // let links behave normally
+  const card = e.target.closest('.tender-card');
+  if (!card) return;
+  const tender = currentTenders[Number(card.getAttribute('data-index'))];
+  if (tender) openTenderModal(tender);
+});
+
+function toggleLoginBanner(show) {
+  let banner = document.getElementById('login-banner');
+  if (show && !banner) {
+    banner = document.createElement('div');
+    banner.className = 'login-banner';
+    banner.id = 'login-banner';
+    banner.innerHTML = '<p><strong>Manual login needed.</strong> A Chromium window should have opened on this machine. Log into your Tendium account there, then click the button once you can see your dashboard. If the window doesn\'t respond to clicks/typing, save your login on the Inställningar page instead.</p>' +
+      '<form method="post" action="/confirm-login"><button type="submit" class="primary">I\'ve logged in</button></form>';
+    document.querySelector('main').insertBefore(banner, document.querySelector('main').firstChild);
+  } else if (!show && banner) {
+    banner.remove();
+  }
+}
+
+function renderTagBadges(tagsStr) {
+  return (tagsStr || '').split('|').filter(Boolean)
+    .map(t => `<span class="tag-pill">${escapeHtml(t)}</span>`).join('');
+}
+
+function updateTagOptions(tenders) {
+  const tagSet = new Set();
+  tenders.forEach(t => (t.tags || '').split('|').forEach(tag => { if (tag) tagSet.add(tag); }));
+  const datalist = document.getElementById('tag-options');
+  datalist.innerHTML = Array.from(tagSet).sort().map(t => `<option value="${escapeHtml(t)}">`).join('');
+}
+
+function applyTagFilter() {
+  const q = (document.getElementById('tag-filter').value || '').trim().toLowerCase();
+  const cards = document.querySelectorAll('.tender-card');
+  let visible = 0;
+  cards.forEach(card => {
+    const tags = card.getAttribute('data-tags') || '';
+    const show = !q || tags.includes(q);
+    card.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  const countEl = document.getElementById('tender-count');
+  if (cards.length > 0) {
+    countEl.textContent = q ? `${visible} of ${cards.length} shown (filtered by "${q}")` : `${cards.length} shown (most recent first)`;
+  }
+}
+
+function buildTenderCard(t, idx) {
+  const titleCell = t.url
+    ? `<a href="${t.url}" target="_blank" rel="noopener">${escapeHtml(t.title)}</a>`
+    : escapeHtml(t.title);
+  const period = t.contract_start
+    ? escapeHtml([t.contract_start, t.contract_end].filter(Boolean).join(' – '))
+    : '—';
+  const companyCell = t.contract_url
+    ? `<a href="${t.contract_url}" target="_blank" rel="noopener">${escapeHtml(t.contracted_company || 'Avtal')}</a>`
+    : escapeHtml(t.contracted_company || '—');
+  const statusBadge = `<span class="badge ${t.renewal_css || 'idle'}">${escapeHtml(t.renewal_label || '—')}</span>`;
+  const typePill = t.procurement_type ? `<span class="tag-pill">${escapeHtml(t.procurement_type)}</span>` : '';
+
+  return `<div class="tender-card" data-tags="${escapeHtml((t.tags || '').toLowerCase())}" data-index="${idx}">
+    <div class="tender-card-top">
+      <div>
+        <h3 class="tender-title">${titleCell}</h3>
+        <div class="tender-subtitle">${escapeHtml([t.buyer, t.region].filter(Boolean).join(' · '))}</div>
+      </div>
+      <div class="tender-card-badges">${statusBadge}${typePill}${renderTagBadges(t.tags)}</div>
+    </div>
+    <div class="tender-facts">
+      <div class="tender-fact"><span class="fact-label">Tilldelat bolag</span><span class="fact-value">${companyCell}</span></div>
+      <div class="tender-fact"><span class="fact-label">Avtalsperiod</span><span class="fact-value">${period}</span></div>
+      <div class="tender-fact"><span class="fact-label">Tilläggstid</span><span class="fact-value">${escapeHtml(t.extension_period) || '—'}</span></div>
+      <div class="tender-fact"><span class="fact-label">Deadline</span><span class="fact-value">${escapeHtml(t.deadline) || '—'}</span></div>
+      <div class="tender-fact"><span class="fact-label">Ansvarig</span><span class="fact-value">${contactDisplay(t)}</span></div>
+    </div>
+    ${t.description ? `<p class="tender-desc">${escapeHtml(t.description)}</p>` : ''}
+    <div class="tender-card-footer"><span>Skrapad: ${escapeHtml(t.scraped_at)}</span></div>
+  </div>`;
+}
+
+async function refreshTenders() {
+  try {
+    const res = await fetch('/api/tenders');
+    const data = await res.json();
+    const list = document.getElementById('tenders-list');
+    currentTenders = data.tenders;
+    updateTagOptions(data.tenders);
+    updateStats(data.stats);
+    if (data.tenders.length === 0) {
+      document.getElementById('tender-count').textContent = '0 shown (most recent first)';
+      list.innerHTML = '<div class="empty" id="tenders-empty">No tenders scraped yet. Run the scraper to populate this list.</div>';
+      return;
+    }
+    list.innerHTML = data.tenders.map((t, idx) => buildTenderCard(t, idx)).join('');
+    applyTagFilter();
+  } catch (e) { /* ignore */ }
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.getElementById('tag-filter').addEventListener('input', applyTagFilter);
+document.getElementById('tag-filter-clear').addEventListener('click', () => {
+  document.getElementById('tag-filter').value = '';
+  applyTagFilter();
+});
+
+updateTagOptions({{ tenders|tojson }});
+
+window.onStatusRefresh = function(s, wasRunning) {
+  runBtn.disabled = s.running;
+  stopBtn.disabled = !s.running;
+  toggleLoginBanner(s.needs_login);
+  document.getElementById('stat-started').textContent = fmtTime(s.started_at);
+  document.getElementById('stat-finished').textContent = fmtTime(s.finished_at);
+  document.getElementById('stat-exit').textContent = (s.exit_code === null || s.exit_code === undefined) ? '—' : s.exit_code;
+  if (wasRunning && !s.running) {
+    refreshTenders();
+  }
+};
+{% endblock %}

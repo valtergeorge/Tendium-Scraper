@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}Tendium Scraper{% endblock %}</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-border: #262b36;
+    --text: #e6e9ef;
+    --muted: #8b93a3;
+    --accent: #4f8cff;
+    --accent-hover: #6c9fff;
+    --green: #3ecf8e;
+    --red: #ef5a5a;
+    --amber: #e2b93b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.4;
+  }
+  header {
+    padding: 20px 28px;
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  nav.top-nav { display: flex; gap: 4px; }
+  nav.top-nav a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 7px;
+  }
+  nav.top-nav a:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+  nav.top-nav a.active { color: var(--text); background: rgba(79,140,255,0.15); }
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  body { font-size: 15px; }
+  main {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 24px 28px 60px;
+    display: grid;
+    gap: 20px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .panel h2 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 14px 0;
+  }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge.running { background: rgba(226,185,59,0.15); color: var(--amber); }
+  .badge.idle { background: rgba(139,147,163,0.15); color: var(--muted); }
+  .badge.ok { background: rgba(62,207,142,0.15); color: var(--green); }
+  .badge.err { background: rgba(239,90,90,0.15); color: var(--red); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 7px;
+    padding: 9px 16px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  button.primary { background: var(--accent); color: white; }
+  button.primary:hover { background: var(--accent-hover); }
+  button.danger { background: rgba(239,90,90,0.15); color: var(--red); }
+  button.danger:hover { background: rgba(239,90,90,0.25); }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--panel-border); }
+  button.ghost:hover { border-color: var(--accent); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .login-banner {
+    background: rgba(226,185,59,0.1);
+    border: 1px solid rgba(226,185,59,0.35);
+    border-radius: 10px;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .login-banner p { margin: 0; font-size: 13px; color: var(--text); }
+  .login-banner strong { color: var(--amber); }
+  form.config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px 20px;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input[type="text"], .field input[type="email"], .field input[type="password"], .field input[type="number"], .field select {
+    background: #0d0f14;
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  .field.checkbox { flex-direction: row; align-items: center; gap: 8px; }
+  .field.checkbox label { font-size: 13px; color: var(--text); }
+  .config-actions { grid-column: 1 / -1; margin-top: 4px; }
+  pre#log {
+    background: #0a0b0f;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 14px;
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #b7c0d1;
+  }
+  .empty { color: var(--muted); font-size: 14px; padding: 24px; text-align: center; }
+
+  .tender-list { display: flex; flex-direction: column; gap: 14px; }
+  .tender-card {
+    background: #12151b;
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .tender-card:hover { border-color: var(--accent); background: #141821; }
+  .tender-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .tender-card-badges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; max-width: 60%; justify-content: flex-end; }
+  .tender-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0 0 5px 0;
+    color: var(--text);
+    line-height: 1.35;
+  }
+  .tender-title a { color: inherit; text-decoration: none; }
+  .tender-title a:hover { color: var(--accent); }
+  .tender-subtitle { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .tender-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 14px 28px;
+    padding: 16px 0;
+    border-top: 1px solid var(--panel-border);
+    border-bottom: 1px solid var(--panel-border);
+    margin-bottom: 14px;
+  }
+  .tender-fact .fact-label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+  .tender-fact .fact-value { font-size: 14.5px; color: var(--text); line-height: 1.5; }
+  .tender-fact .fact-value a { color: var(--accent); text-decoration: none; }
+  .tender-fact .fact-value a:hover { text-decoration: underline; }
+  .tender-desc { font-size: 14.5px; color: #c3c9d4; line-height: 1.55; margin: 0 0 14px 0; }
+  .tender-card-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--muted); }
+  .tag-pill {
+    display: inline-flex;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(139,147,163,0.14);
+    color: #b7bfcc;
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  .panel-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .panel-header-row h2 { margin: 0; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .stat-row { display: flex; gap: 24px; flex-wrap: wrap; font-size: 13px; }
+  .stat-row .stat-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; display: block; margin-bottom: 2px; }
+
+  .stat-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+  }
+  .stat-tile {
+    background: #0d0f14;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .stat-tile .value { font-size: 24px; font-weight: 700; color: var(--text); }
+  .stat-tile .label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(5,6,9,0.65);
+    z-index: 50;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 5vh 20px;
+    overflow-y: auto;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    max-width: 680px;
+    width: 100%;
+    padding: 24px 26px;
+  }
+  .modal-box h3 { margin: 0 0 4px 0; font-size: 18px; }
+  .modal-box .modal-sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .modal-close { float: right; background: transparent; border: none; color: var(--muted); font-size: 20px; cursor: pointer; padding: 0 4px; }
+  .modal-close:hover { color: var(--text); }
+  .modal-grid { display: grid; grid-template-columns: 140px 1fr; gap: 10px 16px; font-size: 13px; }
+  .modal-grid dt { color: var(--muted); }
+  .modal-grid dd { margin: 0; }
+  .modal-desc { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--panel-border); font-size: 13px; color: var(--text); white-space: pre-wrap; }
+  .modal-links { margin-top: 16px; display: flex; gap: 10px; }
+  code { background: #0d0f14; border: 1px solid var(--panel-border); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Tendium Scraper</h1>
+    <div class="sub">{% block subtitle %}Local control panel{% endblock %}</div>
+  </div>
+  <div class="header-right">
+    <nav class="top-nav">
+      <a href="{{ url_for('index') }}" class="{% if active_page == 'dashboard' %}active{% endif %}">Översikt</a>
+      <a href="{{ url_for('settings_page') }}" class="{% if active_page == 'settings' %}active{% endif %}">Inställningar</a>
+    </nav>
+    <span id="status-badge" class="badge idle"><span class="dot"></span> loading…</span>
+  </div>
+</header>
+
+<main>
+{% block content %}{% endblock %}
+</main>
+
+{% block modal %}{% endblock %}
+
+<script>
+const statusBadge = document.getElementById('status-badge');
+let wasRunning = {{ 'true' if status.running else 'false' }};
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString();
+}
+
+function renderBadge(s) {
+  statusBadge.className = 'badge';
+  if (s.running) {
+    statusBadge.classList.add('running');
+    statusBadge.innerHTML = '<span class="dot"></span> running' + (s.needs_login ? ' — waiting for login' : '');
+  } else if (s.exit_code === 0) {
+    statusBadge.classList.add('ok');
+    statusBadge.innerHTML = '<span class="dot"></span> idle — last run OK';
+  } else if (s.exit_code !== null && s.exit_code !== undefined) {
+    statusBadge.classList.add('err');
+    statusBadge.innerHTML = '<span class="dot"></span> idle — last run failed (' + s.exit_code + ')';
+  } else {
+    statusBadge.classList.add('idle');
+    statusBadge.innerHTML = '<span class="dot"></span> idle';
+  }
+}
+
+async function refreshStatusBase() {
+  try {
+    const res = await fetch('/api/status');
+    const s = await res.json();
+    renderBadge(s);
+    if (window.onStatusRefresh) window.onStatusRefresh(s, wasRunning);
+    wasRunning = s.running;
+  } catch (e) { /* server may be restarting; ignore transient errors */ }
+}
+
+refreshStatusBase();
+setInterval(refreshStatusBase, 2000);
+
+{% block scripts %}{% endblock %}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Tendium Scraper — Inställningar{% endblock %}
+{% block subtitle %}Inställningar{% endblock %}
+
+{% block content %}
+
+  <section class="panel">
+    <div class="panel-header-row">
+      <h2>Login credentials</h2>
+      <span class="muted">used to auto-fill Tendium's own login form</span>
+    </div>
+    <p class="muted" style="margin-top:-6px;">
+      Stored locally in <code>credentials.json</code> (plaintext, file permissions restricted to your
+      user account) — never sent anywhere except directly into Tendium's login form. Leave this empty
+      to fall back to the manual "I've logged in" flow on the
+      <a href="{{ url_for('index') }}" style="color:var(--accent);">Översikt</a> page instead.
+    </p>
+    {% if login_email %}
+    <p class="muted">Currently saved for: <strong>{{ login_email }}</strong></p>
+    {% endif %}
+    <form class="config-grid" method="post" action="{{ url_for('save_credentials_route') }}">
+      <div class="field">
+        <label for="login_email">Tendium email</label>
+        <input type="email" id="login_email" name="email" value="{{ login_email or '' }}" placeholder="you@company.se">
+      </div>
+      <div class="field">
+        <label for="login_password">Password {% if login_email %}(leave blank to keep current){% endif %}</label>
+        <input type="password" id="login_password" name="password" placeholder="{% if login_email %}••••••••{% else %}Tendium password{% endif %}">
+      </div>
+      <div class="config-actions row">
+        <button type="submit" class="primary">Save credentials</button>
+        {% if login_email %}
+        <button type="submit" formaction="{{ url_for('clear_credentials_route') }}" class="ghost">Clear saved credentials</button>
+        {% endif %}
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Settings</h2>
+    <form class="config-grid" method="post" action="{{ url_for('update_config') }}">
+      <div class="field checkbox">
+        <input type="checkbox" id="headless" name="headless" {% if config.headless %}checked{% endif %}>
+        <label for="headless">Headless mode (uncheck to watch runs / for first login)</label>
+      </div>
+      <div class="field">
+        <label for="csv_write_mode">CSV write mode</label>
+        <select id="csv_write_mode" name="csv_write_mode">
+          <option value="append" {% if config.csv_write_mode == 'append' %}selected{% endif %}>Append (dedupe)</option>
+          <option value="overwrite" {% if config.csv_write_mode == 'overwrite' %}selected{% endif %}>Overwrite</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="target_url">Target URL (page to scrape)</label>
+        <input type="text" id="target_url" name="target_url" value="{{ config.target_url }}">
+      </div>
+      <div class="field">
+        <label for="nav_timeout_ms">Navigation timeout (ms)</label>
+        <input type="number" id="nav_timeout_ms" name="nav_timeout_ms" value="{{ config.nav_timeout_ms }}">
+      </div>
+      <div class="field">
+        <label for="default_timeout_ms">Default action timeout (ms)</label>
+        <input type="number" id="default_timeout_ms" name="default_timeout_ms" value="{{ config.default_timeout_ms }}">
+      </div>
+      <div class="field checkbox">
+        <input type="checkbox" id="fetch_details" name="fetch_details" {% if config.fetch_details %}checked{% endif %}>
+        <label for="fetch_details">Open each tender's preview for company, summary, contact, contract period, tags</label>
+      </div>
+      <div class="field">
+        <label for="max_detail_pages">Max tenders opened per run (0 = no limit)</label>
+        <input type="number" id="max_detail_pages" name="max_detail_pages" value="{{ config.max_detail_pages }}">
+      </div>
+      <div class="field">
+        <label for="renewal_alert_days">Flag contracts as "expiring soon" this many days before contract_end</label>
+        <input type="number" id="renewal_alert_days" name="renewal_alert_days" value="{{ config.renewal_alert_days }}">
+      </div>
+      <div class="config-actions">
+        <button type="submit" class="primary">Save settings</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header-row">
+      <h2>Run log</h2>
+      <span class="muted">auto-refreshes while running</span>
+    </div>
+    <pre id="log">{{ log_tail }}</pre>
+  </section>
+
+{% endblock %}
+
+{% block scripts %}
+const logEl = document.getElementById('log');
+
+async function refreshLog() {
+  try {
+    const res = await fetch('/api/log');
+    const data = await res.json();
+    const atBottom = Math.abs(logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 30;
+    logEl.textContent = data.log;
+    if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+  } catch (e) { /* ignore */ }
+}
+
+refreshLog();
+setInterval(refreshLog, 2000);
+{% endblock %}
