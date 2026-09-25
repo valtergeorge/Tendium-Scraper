@@ -25,6 +25,7 @@ installation step is needed.
 """
 
 import csv
+import json
 import os
 import subprocess
 import sys
@@ -43,6 +44,8 @@ SESSION_DIR = os.path.join(PROJECT_DIR, "tendium_session")
 OUTPUT_CSV = os.path.join(PROJECT_DIR, "tendium_tenders.csv")
 LOG_PATH = os.path.join(PROJECT_DIR, "run.log")
 LOGIN_SIGNAL_FILE = os.path.join(PROJECT_DIR, "login_confirmed.flag")
+FILTER_STATUS_PATH = os.path.join(PROJECT_DIR, "filter_status.json")
+AVAILABLE_FILTERS_PATH = os.path.join(PROJECT_DIR, "available_filters.json")
 
 LOG_TAIL_LINES = 400
 TABLE_ROW_LIMIT = 200
@@ -255,6 +258,38 @@ def compute_stats(tenders, window_days):
     }
 
 
+def read_filter_status():
+    if not os.path.isfile(FILTER_STATUS_PATH):
+        return None
+    try:
+        with open(FILTER_STATUS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def read_available_keyword_options():
+    """
+    The real Sökord keyword list, as last discovered by a scraper run —
+    [{"label": ..., "checked": ...}, ...] — with "checked" reflecting the
+    saved config's desired_keywords rather than whatever Tendium currently
+    has live, so the checkboxes shown match what will actually be applied.
+    """
+    if not os.path.isfile(AVAILABLE_FILTERS_PATH):
+        return []
+    try:
+        with open(AVAILABLE_FILTERS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    desired = {k.strip().lower() for k in scraper_config.load_config().get("desired_keywords", "").split(",") if k.strip()}
+    options = data.get("keywords", [])
+    for opt in options:
+        opt["checked"] = opt["label"].strip().lower() in desired
+    return options
+
+
 @app.route("/")
 def index():
     cfg = scraper_config.load_config()
@@ -269,6 +304,7 @@ def index():
         status=get_status(),
         tenders=all_tenders[:TABLE_ROW_LIMIT],
         stats=compute_stats(all_tenders, window_days),
+        filter_status=read_filter_status(),
         csv_exists=os.path.isfile(OUTPUT_CSV),
         active_page="dashboard",
     )
@@ -282,12 +318,16 @@ def settings_page():
         status=get_status(),
         log_tail=read_log_tail(),
         login_email=credentials.get_saved_email(),
+        keyword_options=read_available_keyword_options(),
         active_page="settings",
     )
 
 
 @app.route("/run", methods=["POST"])
 def run():
+    max_pages_raw = request.form.get("max_detail_pages")
+    if max_pages_raw is not None:
+        scraper_config.save_config({"max_detail_pages": max_pages_raw})
     start_run()
     return redirect(url_for("index"))
 
@@ -346,6 +386,10 @@ def reset_session():
 @app.route("/config", methods=["POST"])
 def update_config():
     form = request.form
+    if form.get("keywords_mode") == "checkbox":
+        desired_keywords = ", ".join(form.getlist("keywords"))
+    else:
+        desired_keywords = form.get("desired_keywords_text", "")
     scraper_config.save_config({
         "headless": "headless" in form,  # checkbox present == checked
         "target_url": form.get("target_url", ""),
@@ -355,6 +399,10 @@ def update_config():
         "fetch_details": "fetch_details" in form,
         "max_detail_pages": form.get("max_detail_pages", "0"),
         "renewal_alert_days": form.get("renewal_alert_days", "180"),
+        "expected_status": form.get("expected_status", ""),
+        "desired_keywords": desired_keywords,
+        "auto_apply_filters": "auto_apply_filters" in form,
+        "require_filter_match": "require_filter_match" in form,
     })
     return redirect(url_for("settings_page"))
 
@@ -388,6 +436,11 @@ def api_tenders():
         "tenders": all_tenders[:TABLE_ROW_LIMIT],
         "stats": compute_stats(all_tenders, window_days),
     })
+
+
+@app.route("/api/filter-status")
+def api_filter_status():
+    return jsonify(read_filter_status() or {})
 
 
 if __name__ == "__main__":

@@ -27,6 +27,17 @@ DEFAULTS = {
     # it as "needs renewal soon" (a new procurement usually needs a long
     # lead time, so this defaults well above 30 days).
     "renewal_alert_days": 180,
+    # What the tender-status filter (read from the URL) is expected to be.
+    "expected_status": "Awarded",
+    # Comma-separated Sökord/keyword names that should be checked on Tendium.
+    # If auto_apply_filters is on, the scraper clicks these into place (and
+    # unchecks all others) and clicks "Spara ändringar" to save it — this
+    # changes the account's saved bevakningsprofil, not just the current view.
+    # Either way, the resulting state is always verified afterward against
+    # this same list before scraping proceeds.
+    "desired_keywords": "",
+    "auto_apply_filters": True,
+    "require_filter_match": True,
 }
 
 # type coercion rules applied when values come in from an HTML form (strings)
@@ -39,6 +50,10 @@ _FIELD_TYPES = {
     "fetch_details": bool,
     "max_detail_pages": int,
     "renewal_alert_days": int,
+    "expected_status": str,
+    "desired_keywords": str,
+    "auto_apply_filters": bool,
+    "require_filter_match": bool,
 }
 
 

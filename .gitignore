@@ -13,6 +13,8 @@ tendium_tenders.csv
 debug/
 run.log
 manage_server.log
+filter_status.json
+available_filters.json
 
 # OS
 .DS_Store

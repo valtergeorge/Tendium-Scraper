@@ -42,8 +42,20 @@
       </div>
     </div>
     <div class="row">
-      <form method="post" action="{{ url_for('run') }}">
-        <button type="submit" class="primary" id="run-btn" {% if status.running %}disabled{% endif %}>Run scraper now</button>
+      <form method="post" action="{{ url_for('run') }}" class="row" style="gap:10px;">
+        <div class="field" style="min-width:0;">
+          <label for="run_max_detail_pages" style="font-size:11px;">Antal att bearbeta</label>
+          <div class="row" style="gap:6px;">
+            <input type="number" id="run_max_detail_pages" name="max_detail_pages" min="0"
+                   value="{{ config.max_detail_pages }}" style="width:80px;"
+                   {% if config.max_detail_pages == 0 %}readonly{% endif %}>
+            <label style="display:flex;align-items:center;gap:5px;font-size:13px;font-weight:400;white-space:nowrap;">
+              <input type="checkbox" id="run_all_checkbox" {% if config.max_detail_pages == 0 %}checked{% endif %}>
+              Alla
+            </label>
+          </div>
+        </div>
+        <button type="submit" class="primary" id="run-btn" style="align-self:flex-end;" {% if status.running %}disabled{% endif %}>Run scraper now</button>
       </form>
       <form method="post" action="{{ url_for('stop') }}">
         <button type="submit" class="danger" id="stop-btn" {% if not status.running %}disabled{% endif %}>Stop</button>
@@ -52,6 +64,33 @@
       <form method="post" action="{{ url_for('reset_session') }}" onsubmit="return confirm('This deletes the saved login session. The next run will require logging in again. Continue?');">
         <button type="submit" class="ghost" {% if status.running %}disabled{% endif %}>Reset saved session</button>
       </form>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header-row">
+      <h2>Filterstatus (Tendium)</h2>
+      <span class="muted">läses från sidan innan varje körning — klickar aldrig på Tendiums filter</span>
+    </div>
+    <div id="filter-status-content">
+      {% if filter_status %}
+        <div class="row" style="margin-bottom:10px;">
+          <span class="badge {{ 'ok' if filter_status.ok else 'err' }}" id="filter-status-badge">
+            {{ 'Matchar' if filter_status.ok else 'Matchar INTE' }}
+          </span>
+          <span class="muted" id="filter-status-time">Senast kontrollerad: {{ filter_status.checked_at }}</span>
+        </div>
+        <div class="tender-facts" style="border:none;padding:0;margin:0;" id="filter-status-facts">
+          <div class="tender-fact"><span class="fact-label">Status (faktisk / förväntad)</span><span class="fact-value">{{ filter_status.actual.status }} / {{ filter_status.expected.status or '(ingen)' }}</span></div>
+          <div class="tender-fact"><span class="fact-label">Sökord (faktiska / förväntade)</span><span class="fact-value">{{ filter_status.actual.keywords|join(', ') or '(inga)' }} / {{ filter_status.expected.keywords or '(inga)' }}</span></div>
+          <div class="tender-fact"><span class="fact-label">Träffar på Tendium</span><span class="fact-value">{{ filter_status.actual.hits if filter_status.actual.hits is not none else '—' }}</span></div>
+        </div>
+        {% if filter_status.problems %}
+        <p class="tender-desc" style="color:var(--red);" id="filter-status-problems">{{ filter_status.problems|join(' ') }}</p>
+        {% endif %}
+      {% else %}
+        <div class="empty" id="filter-status-empty">Ingen kontroll gjord än — körs automatiskt vid nästa scraper-körning.</div>
+      {% endif %}
     </div>
   </section>
 
@@ -347,6 +386,53 @@ document.getElementById('tag-filter-clear').addEventListener('click', () => {
 
 updateTagOptions({{ tenders|tojson }});
 
+const runAllCheckbox = document.getElementById('run_all_checkbox');
+const runMaxPagesInput = document.getElementById('run_max_detail_pages');
+runAllCheckbox.addEventListener('change', () => {
+  if (runAllCheckbox.checked) {
+    runMaxPagesInput.value = 0;
+    runMaxPagesInput.readOnly = true;
+  } else {
+    runMaxPagesInput.readOnly = false;
+    if (Number(runMaxPagesInput.value) === 0) runMaxPagesInput.value = 25;
+  }
+});
+runMaxPagesInput.addEventListener('input', () => {
+  if (Number(runMaxPagesInput.value) > 0) runAllCheckbox.checked = false;
+});
+
+function renderFilterStatus(fs) {
+  const container = document.getElementById('filter-status-content');
+  if (!fs || !fs.checked_at) {
+    container.innerHTML = '<div class="empty" id="filter-status-empty">Ingen kontroll gjord än — körs automatiskt vid nästa scraper-körning.</div>';
+    return;
+  }
+  const badgeClass = fs.ok ? 'ok' : 'err';
+  const badgeText = fs.ok ? 'Matchar' : 'Matchar INTE';
+  const keywordsActual = (fs.actual.keywords || []).join(', ') || '(inga)';
+  const problems = (fs.problems || []).join(' ');
+  container.innerHTML = `
+    <div class="row" style="margin-bottom:10px;">
+      <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+      <span class="muted">Senast kontrollerad: ${escapeHtml(fs.checked_at)}</span>
+    </div>
+    <div class="tender-facts" style="border:none;padding:0;margin:0;">
+      <div class="tender-fact"><span class="fact-label">Status (faktisk / förväntad)</span><span class="fact-value">${escapeHtml(fs.actual.status)} / ${escapeHtml(fs.expected.status || '(ingen)')}</span></div>
+      <div class="tender-fact"><span class="fact-label">Sökord (faktiska / förväntade)</span><span class="fact-value">${escapeHtml(keywordsActual)} / ${escapeHtml(fs.expected.keywords || '(inga)')}</span></div>
+      <div class="tender-fact"><span class="fact-label">Träffar på Tendium</span><span class="fact-value">${fs.actual.hits ?? '—'}</span></div>
+    </div>
+    ${problems ? `<p class="tender-desc" style="color:var(--red);">${escapeHtml(problems)}</p>` : ''}
+  `;
+}
+
+async function refreshFilterStatus() {
+  try {
+    const res = await fetch('/api/filter-status');
+    const data = await res.json();
+    renderFilterStatus(data);
+  } catch (e) { /* ignore */ }
+}
+
 window.onStatusRefresh = function(s, wasRunning) {
   runBtn.disabled = s.running;
   stopBtn.disabled = !s.running;
@@ -356,6 +442,7 @@ window.onStatusRefresh = function(s, wasRunning) {
   document.getElementById('stat-exit').textContent = (s.exit_code === null || s.exit_code === undefined) ? '—' : s.exit_code;
   if (wasRunning && !s.running) {
     refreshTenders();
+    refreshFilterStatus();
   }
 };
 {% endblock %}

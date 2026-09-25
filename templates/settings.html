@@ -54,6 +54,40 @@
         <label for="target_url">Target URL (page to scrape)</label>
         <input type="text" id="target_url" name="target_url" value="{{ config.target_url }}">
       </div>
+      {% if keyword_options %}
+      <input type="hidden" name="keywords_mode" value="checkbox">
+      <div class="field" style="grid-column: 1 / -1;">
+        <label>Sökord att hålla ikryssade på Tendium</label>
+        <div class="row" style="flex-wrap:wrap; gap: 6px 18px; margin-top:4px;">
+          {% for opt in keyword_options %}
+          <label style="display:flex; align-items:center; gap:6px; font-weight:400; font-size:13px;">
+            <input type="checkbox" name="keywords" value="{{ opt.label }}" {% if opt.checked %}checked{% endif %}>
+            {{ opt.label }}
+          </label>
+          {% endfor %}
+        </div>
+        <span class="muted">Upptäckt från Tendium vid senaste körningen. Kryssa i de du vill ha aktiva — sparas och tillämpas på Tendium (klickar och sparar där) om "Tillämpa filter automatiskt" är på nedan.</span>
+      </div>
+      {% else %}
+      <div class="field">
+        <label for="desired_keywords_text">Sökord att hålla ikryssade (kommaseparerat)</label>
+        <input type="text" id="desired_keywords_text" name="desired_keywords_text" value="{{ config.desired_keywords }}" placeholder="t.ex. CRM, Ekonomisystem">
+        <span class="muted">Kör scrapern en gång så upptäcks de riktiga sökorden från Tendium och visas som kryssrutor här istället.</span>
+      </div>
+      {% endif %}
+      <div class="field checkbox">
+        <input type="checkbox" id="auto_apply_filters" name="auto_apply_filters" {% if config.auto_apply_filters %}checked{% endif %}>
+        <label for="auto_apply_filters">Tillämpa filter automatiskt (klickar i/ur sökord och klickar "Spara ändringar" på Tendium — ändrar din sparade bevakningsprofil)</label>
+      </div>
+      <div class="field">
+        <label for="expected_status">Förväntad status-filter på Tendium (t.ex. "Awarded")</label>
+        <input type="text" id="expected_status" name="expected_status" value="{{ config.expected_status }}">
+        <span class="muted">Läses från sidans URL innan varje körning och jämförs med detta.</span>
+      </div>
+      <div class="field checkbox">
+        <input type="checkbox" id="require_filter_match" name="require_filter_match" {% if config.require_filter_match %}checked{% endif %}>
+        <label for="require_filter_match">Stoppa körningen om filtret på Tendium inte matchar ovan efteråt (annars bara varna)</label>
+      </div>
       <div class="field">
         <label for="nav_timeout_ms">Navigation timeout (ms)</label>
         <input type="number" id="nav_timeout_ms" name="nav_timeout_ms" value="{{ config.nav_timeout_ms }}">

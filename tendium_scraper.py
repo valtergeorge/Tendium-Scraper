@@ -28,12 +28,14 @@ the current settings.
 import argparse
 import calendar
 import csv
+import json
 import os
 import random
 import re
 import sys
 import time
 from datetime import datetime
+from urllib.parse import urlparse, parse_qs
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -47,6 +49,8 @@ from credentials import load_credentials
 SESSION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tendium_session")
 OUTPUT_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tendium_tenders.csv")
 DEBUG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug")
+FILTER_STATUS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filter_status.json")
+AVAILABLE_FILTERS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "available_filters.json")
 
 # Tendium runs continuous background traffic (PostHog session recording,
 # GTM, survey widgets, etc.), so the browser can go minutes without ever
@@ -1119,6 +1123,210 @@ def save_to_csv(rows, path, mode="append"):
 
 
 # ---------------------------------------------------------------------------
+# FILTER APPLY + VERIFICATION
+#
+# Toggling a "Sökord" checkbox alone leaves the page in an unsaved edit-mode
+# state (an "Ångra"/"Spara ändringar" toolbar appears) that does NOT actually
+# narrow results until "Spara ändringar" is clicked — skipping that step is
+# what earlier produced thousands of unrelated results instead of a narrowed
+# set. apply_and_save_keyword_filter() below does the full sequence: toggle
+# to match desired_keywords, then click Save. After that (or if auto-apply is
+# off), read_active_filters()/verify_filters_match() double-check the
+# resulting state and can abort the run if it still doesn't match.
+# ---------------------------------------------------------------------------
+
+def discover_keyword_options(page):
+    """
+    Read every keyword in Tendium's "Sökord" panel (not just the checked
+    ones) so the dashboard can render real checkboxes for them. Read-only —
+    only reveals the "Se (N) mer" collapsed ones, never toggles anything.
+    """
+    see_more = page.locator("text=/Se \\(\\d+\\) mer/")
+    try:
+        if see_more.count() > 0:
+            see_more.first.click()
+            page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+    options = []
+    items = page.locator("[class*='_keywordItem_']")
+    try:
+        count = items.count()
+    except Exception:
+        count = 0
+    for i in range(count):
+        item = items.nth(i)
+        try:
+            label = item.inner_text(timeout=1000).strip()
+            checkbox = item.locator("button[role='checkbox']").first
+            checked = checkbox.count() > 0 and checkbox.get_attribute("aria-checked") == "true"
+            options.append({"label": label, "checked": checked})
+        except Exception:
+            continue
+    return options
+
+
+def write_available_filters(options):
+    try:
+        with open(AVAILABLE_FILTERS_PATH, "w", encoding="utf-8") as f:
+            json.dump({
+                "checked_at": datetime.now().isoformat(timespec="seconds"),
+                "keywords": options,
+            }, f, indent=2)
+    except OSError as exc:
+        print(f"[warn] Failed to write {AVAILABLE_FILTERS_PATH}: {exc}")
+
+
+def apply_and_save_keyword_filter(page, desired_keywords_csv):
+    """
+    Toggle Sökord checkboxes so only `desired_keywords_csv` (comma-separated)
+    are checked, then click "Spara ändringar" to actually commit it — this
+    permanently changes the account's saved bevakningsprofil on Tendium, not
+    just the current view, which is why it's opt-in (auto_apply_filters).
+    Returns (changed: bool, saved: bool).
+    """
+    desired = {k.strip().lower() for k in desired_keywords_csv.split(",") if k.strip()}
+
+    see_more = page.locator("text=/Se \\(\\d+\\) mer/")
+    try:
+        if see_more.count() > 0:
+            see_more.first.click()
+            page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+    items = page.locator("[class*='_keywordItem_']")
+    try:
+        count = items.count()
+    except Exception:
+        count = 0
+
+    changed = False
+    for i in range(count):
+        item = items.nth(i)
+        try:
+            label = item.inner_text(timeout=1000).strip()
+        except Exception:
+            continue
+        checkbox = item.locator("button[role='checkbox']").first
+        if checkbox.count() == 0:
+            continue
+        try:
+            is_checked = checkbox.get_attribute("aria-checked") == "true"
+        except Exception:
+            continue
+        want_checked = label.lower() in desired
+        if is_checked != want_checked:
+            try:
+                checkbox.click(timeout=3000)
+                human_delay(0.3, 0.6)
+                changed = True
+                print(f"[info] Sökord: {'checked' if want_checked else 'unchecked'} '{label}'.")
+            except Exception as exc:
+                print(f"[warn] Failed to toggle keyword '{label}': {exc}")
+
+    if not changed:
+        print("[info] Sökord already matched desired keywords; nothing to save.")
+        return False, True
+
+    save_btn = page.locator("button:has-text('Spara ändringar')")
+    if save_btn.count() == 0:
+        print("[warn] Toggled keywords but found no 'Spara ändringar' button — change may not be saved.")
+        return True, False
+
+    try:
+        save_btn.first.click(timeout=5000)
+        # Wait for the unsaved-changes toolbar to disappear, confirming the save went through.
+        page.wait_for_selector("button:has-text('Spara ändringar')", state="hidden", timeout=SETTLE_TIMEOUT_MS)
+        human_delay(0.8, 1.3)
+        print("[info] Sökord changes saved on Tendium (this updates the account's bevakningsprofil).")
+        return True, True
+    except Exception as exc:
+        print(f"[warn] Clicked 'Spara ändringar' but couldn't confirm it saved: {exc}")
+        return True, False
+
+
+def read_active_filters(page):
+    """
+    Read the tender-status filter (from the URL's tenderStatus param) and
+    the Sökord/keyword checkboxes' checked state (read-only — never clicks),
+    plus the visible result count, from the current page.
+    """
+    query = parse_qs(urlparse(page.url).query)
+    status = (query.get("tenderStatus", [""])[0]) or "Active"  # Tendium's own default when unset
+
+    keywords_checked = []
+    items = page.locator("[class*='_keywordItem_']")
+    try:
+        count = items.count()
+    except Exception:
+        count = 0
+    for i in range(count):
+        item = items.nth(i)
+        try:
+            label = item.inner_text(timeout=1000).strip()
+            checkbox = item.locator("button[role='checkbox']").first
+            if checkbox.count() > 0 and checkbox.get_attribute("aria-checked") == "true":
+                keywords_checked.append(label)
+        except Exception:
+            continue
+
+    hits = None
+    hits_el = page.locator("text=/[\\d\\s,]+träffar/")
+    try:
+        if hits_el.count() > 0:
+            hits_text = hits_el.first.inner_text(timeout=1000)
+            digits = re.sub(r"[^\d]", "", hits_text)
+            hits = int(digits) if digits else None
+    except Exception:
+        pass
+
+    return {"status": status, "keywords": sorted(keywords_checked), "hits": hits}
+
+
+def verify_filters_match(actual, cfg):
+    """
+    Compare the page's actual filter state to what's expected in config.
+    An empty expected_* value means "don't check this dimension". Returns
+    (ok, list-of-mismatch-messages).
+    """
+    problems = []
+
+    expected_status = (cfg.get("expected_status") or "").strip()
+    if expected_status and actual["status"].lower() != expected_status.lower():
+        problems.append(f"Status filter is '{actual['status']}', expected '{expected_status}'.")
+
+    expected_keywords_raw = (cfg.get("desired_keywords") or "").strip()
+    if expected_keywords_raw:
+        expected_kw = sorted({k.strip() for k in expected_keywords_raw.split(",") if k.strip()}, key=str.lower)
+        actual_kw = sorted(actual["keywords"], key=str.lower)
+        if [k.lower() for k in expected_kw] != [k.lower() for k in actual_kw]:
+            problems.append(
+                f"Active Sökord keywords are {actual_kw or '(none)'}, expected {expected_kw}."
+            )
+
+    return (len(problems) == 0, problems)
+
+
+def write_filter_status(actual, cfg, ok, problems):
+    try:
+        with open(FILTER_STATUS_PATH, "w", encoding="utf-8") as f:
+            json.dump({
+                "checked_at": datetime.now().isoformat(timespec="seconds"),
+                "actual": actual,
+                "expected": {
+                    "status": cfg.get("expected_status", ""),
+                    "keywords": cfg.get("desired_keywords", ""),
+                },
+                "ok": ok,
+                "problems": problems,
+            }, f, indent=2)
+    except OSError as exc:
+        print(f"[warn] Failed to write {FILTER_STATUS_PATH}: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
 
@@ -1212,6 +1420,41 @@ def main():
         human_delay()
         human_scroll(page)
 
+        # Always discover the real, current keyword list (read-only) so the
+        # dashboard can render live checkboxes for whatever exists on Tendium.
+        try:
+            write_available_filters(discover_keyword_options(page))
+        except Exception as exc:
+            print(f"[warn] Failed to discover Sökord options: {exc}")
+
+        if cfg.get("auto_apply_filters") and (cfg.get("desired_keywords") or "").strip():
+            try:
+                apply_and_save_keyword_filter(page, cfg["desired_keywords"])
+                try:
+                    page.wait_for_load_state("networkidle", timeout=SETTLE_TIMEOUT_MS)
+                except PlaywrightTimeoutError:
+                    pass
+                human_delay()
+            except Exception as exc:
+                print(f"[warn] Failed to apply Sökord filter: {exc}")
+
+        actual_filters = read_active_filters(page)
+        filters_ok, filter_problems = verify_filters_match(actual_filters, cfg)
+        write_filter_status(actual_filters, cfg, filters_ok, filter_problems)
+        print(f"[info] Active filters on page: status='{actual_filters['status']}', "
+              f"keywords={actual_filters['keywords']}, hits={actual_filters['hits']}.")
+        if not filters_ok:
+            for problem in filter_problems:
+                print(f"[warn] Filter mismatch: {problem}")
+            if cfg.get("require_filter_match", True):
+                print("[error] Filter check failed and require_filter_match is on — "
+                      "fix the filter on Tendium (and save it there) or update the "
+                      "expected_status/desired_keywords settings, then rerun.")
+                context.close()
+                sys.exit(1)
+            else:
+                print("[warn] require_filter_match is off — continuing despite mismatch.")
+
         save_debug_snapshot(page, "list_page")
 
         all_rows = []
@@ -1224,7 +1467,11 @@ def main():
             print(f"[info] 0 tenders extracted — see {DEBUG_DIR}/list_page.html to work out the real selectors.")
 
         if all_rows and cfg.get("fetch_details", True):
-            print(f"[info] Opening preview for {len(all_rows)} tender(s)...")
+            # Process oldest-first (list order reversed): if a run gets capped
+            # by max_detail_pages or interrupted partway through, the tenders
+            # most overdue for renewal still get their details fetched first.
+            all_rows = list(reversed(all_rows))
+            print(f"[info] Opening preview for {len(all_rows)} tender(s) (oldest first)...")
             all_rows = enrich_via_preview(page, all_rows, max_pages=cfg.get("max_detail_pages", 0))
 
         for row in all_rows:
